@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: foundry-rs/foundry-toolchain@v1
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm build
+      - name: Reproducible IPFS CID
+        run: |
+          if ! command -v ipfs >/dev/null 2>&1; then
+            echo "Kubo not installed in CI; skipping CID reproduction (see scripts/ipfs-add.sh)"
+            exit 0
+          fi
+          cid1=$(SOURCE_DATE_EPOCH=0 pnpm build >/dev/null && ./scripts/ipfs-add.sh)
+          cid2=$(SOURCE_DATE_EPOCH=0 pnpm build >/dev/null && ./scripts/ipfs-add.sh)
+          test "$cid1" = "$cid2"
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+        env:
+          CI: true

@@ -1,0 +1,14 @@
+{
+  "0x0d582f13": "addOwnerWithThreshold(address,uint256)",
+  "0xf8dc5dd9": "removeOwner(address,address,uint256)",
+  "0xe318b52b": "swapOwner(address,address,address)",
+  "0x694e80c3": "changeThreshold(uint256)",
+  "0xd4d9bdcd": "approveHash(bytes32)",
+  "0x6a761202": "execTransaction(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,bytes)",
+  "0xa9059cbb": "transfer(address,uint256)",
+  "0x095ea7b3": "approve(address,uint256)",
+  "0x23b872dd": "transferFrom(address,address,uint256)",
+  "0x610b5925": "enableModule(address)",
+  "0xe009cfde": "disableModule(address,address)",
+  "0x7de7edef": "changeMasterCopy(address)"
+}
