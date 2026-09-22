@@ -1,0 +1,24 @@
+name: locsafe
+runname: locsafe v$Version
+
+body: |
+  ## Verify this release
+
+  ```
+  git checkout $Tag
+  SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) pnpm install --frozen-lockfile
+  pnpm build
+  ./scripts/ipfs-add.sh
+  ```
+
+  Kubo flags: `--cid-version=1 --chunker=size-262144 --raw-leaves`
+
+  ## Runtime dependencies
+
+  Listed in package.json `dependencies` of this tag. Expected:
+
+  - react
+  - react-dom
+  - viem
+
+  Optional device libraries (Ledger/Trezor) are not required to verify hashes or import/export packages.

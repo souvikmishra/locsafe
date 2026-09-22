@@ -1,0 +1,109 @@
+:root {
+  --text: #1f2933;
+  --muted: #52606d;
+  --bg: #f7f7f4;
+  --card: #ffffff;
+  --border: #d9d9d2;
+  --accent: #0f766e;
+  --danger: #b91c1c;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: system-ui, "Segoe UI", sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  font: 16px/1.45 var(--sans);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+}
+
+h1 {
+  font-size: 1.8rem;
+  margin: 0 0 8px;
+}
+
+nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 16px 0 24px;
+}
+
+nav a {
+  color: var(--accent);
+}
+
+form,
+section {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.95rem;
+}
+
+input,
+select,
+button,
+code {
+  font: inherit;
+}
+
+input,
+select {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+button {
+  background: var(--accent);
+  color: white;
+  border: 0;
+  border-radius: 4px;
+  padding: 10px 14px;
+  cursor: pointer;
+  width: fit-content;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  word-break: break-all;
+  display: block;
+}
+
+.hashes p {
+  margin: 0;
+}
+
+.error {
+  color: var(--danger);
+}
+
+.unverified {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+header p {
+  color: var(--muted);
+  margin: 0;
+}
