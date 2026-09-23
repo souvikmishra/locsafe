@@ -1,11 +1,17 @@
 import { useEffect, useEffectEvent, useState } from "react";
-import { isAddress, type Hex } from "viem";
-import { decodeShareLink, packageFromTx, parsePackage, validatePackage } from "../domain/package.ts";
+import { isAddress } from "viem";
+import {
+  assertPackageHashes,
+  decodeShareLink,
+  packageFromTx,
+  parsePackage,
+  validatePackage,
+} from "../domain/package.ts";
 import { adjustVInSignature } from "../domain/signatures.ts";
-import { ZERO_ADDRESS, type SafeTx, type SignedTxPackage } from "../domain/types.ts";
+import type { SignedTxPackage } from "../domain/types.ts";
 import { e2eHardwareSigner, type HardwareKind, type HardwareSigner } from "../hw/types.ts";
 import { installNetworkGuard } from "../net/guard.ts";
-import { encodeOwnerChange, execDataFromPackage, prevOwnerOf } from "../rpc/execute.ts";
+import { execDataFromPackage } from "../rpc/execute.ts";
 import {
   createRpcClient,
   isApprovedHash,
@@ -14,6 +20,7 @@ import {
   type SafeSnapshot,
 } from "../rpc/safe.ts";
 import { AppShell } from "./AppShell.tsx";
+import { buildSafeTx } from "./build-tx.ts";
 import { Home } from "./Home.tsx";
 import { goTo, parseHash, replaceRoute, type Route } from "./router.ts";
 import { Connect } from "./screens/Connect.tsx";
@@ -93,86 +100,6 @@ async function validateAgainstChain(pkg: SignedTxPackage, snapshot: SafeSnapshot
   }
 }
 
-function buildSafeTx(form: FormData, snapshot: SafeSnapshot): SafeTx {
-  const text = (name: string) => String(form.get(name) ?? "").trim();
-  const address = (name: string, label: string) => {
-    const value = text(name);
-    if (!isAddress(value)) throw new Error(`${label} is not a valid address.`);
-    return value;
-  };
-  const integer = (name: string, label: string) => {
-    const value = text(name) || "0";
-    if (!/^\d+$/.test(value)) throw new Error(`${label} must be a whole number.`);
-    return BigInt(value);
-  };
-  const threshold = () => {
-    const value = integer("threshold", "Threshold");
-    if (value < 1n) throw new Error("Threshold must be at least 1.");
-    return value;
-  };
-
-  let to = snapshot.address;
-  let value = 0n;
-  let data: Hex = "0x";
-  let operation: 0 | 1 = 0;
-  switch (text("kind")) {
-    case "eth":
-      to = address("to", "Recipient");
-      value = integer("value", "Amount");
-      break;
-    case "arbitrary": {
-      to = address("to", "Contract address");
-      value = integer("value", "Amount");
-      const raw = text("data") || "0x";
-      if (!/^0x([0-9a-fA-F]{2})*$/.test(raw)) throw new Error("Data must be 0x-prefixed hex bytes.");
-      data = raw as Hex;
-      operation = text("operation") === "1" ? 1 : 0;
-      break;
-    }
-    case "addOwner":
-      data = encodeOwnerChange("addOwnerWithThreshold", {
-        owner: address("owner", "New owner"),
-        threshold: threshold(),
-      });
-      break;
-    case "removeOwner": {
-      const owner = address("owner", "Owner");
-      data = encodeOwnerChange("removeOwner", {
-        prevOwner: prevOwnerOf(snapshot.owners, owner),
-        owner,
-        threshold: threshold(),
-      });
-      break;
-    }
-    case "swapOwner": {
-      const oldOwner = address("oldOwner", "Current owner");
-      data = encodeOwnerChange("swapOwner", {
-        prevOwner: prevOwnerOf(snapshot.owners, oldOwner),
-        oldOwner,
-        newOwner: address("newOwner", "New owner"),
-      });
-      break;
-    }
-    case "changeThreshold":
-      data = encodeOwnerChange("changeThreshold", { threshold: threshold() });
-      break;
-    default:
-      throw new Error("Choose a transaction type.");
-  }
-  return {
-    to,
-    value,
-    data,
-    operation,
-    safeTxGas: 0n,
-    baseGas: 0n,
-    gasPrice: 0n,
-    gasToken: ZERO_ADDRESS,
-    refundReceiver: ZERO_ADDRESS,
-    nonce: snapshot.nonce,
-  };
-}
-
 export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -214,6 +141,8 @@ export default function App() {
 
   /** Single entry point for files, pasted links and #/p/ URLs. */
   async function acceptPackage(pkg: SignedTxPackage) {
+    // The hashes are shown and sent to the device, so they must match the transaction fields.
+    assertPackageHashes(pkg);
     const rpcUrl = session?.rpcUrl;
     if (!rpcUrl) {
       // Reviewable offline; the Review screen flags it as not validated until Connect.
@@ -294,9 +223,12 @@ export default function App() {
     run(`sign-${kind}`, async () => {
       const pkg = session?.pkg;
       if (!session || !pkg) return;
+      if (!isPackageValidated(session)) {
+        throw new Error("Connect first, so the account on your device can be checked against the Safe's owners.");
+      }
       const signer = await getSigner(kind);
       const address = await signer.getAddress();
-      if (isPackageValidated(session) && !session.snapshot!.owners.some((o) => sameAddress(o, address))) {
+      if (!session.snapshot!.owners.some((o) => sameAddress(o, address))) {
         throw new Error(`${address} is not an owner of this Safe. Check the account on your ${kind}.`);
       }
       const signature = adjustVInSignature(await signer.signSafeTx(pkg.hashes));

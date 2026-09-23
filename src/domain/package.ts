@@ -215,7 +215,14 @@ export async function validatePackage(args: {
   } catch (error) {
     return { ok: false, reason: (error as Error).message };
   }
+  // execTransaction needs strictly increasing owners, so one owner signing twice reverts.
+  const seen = new Set<string>();
   for (const signature of args.pkg.signatures) {
+    const signer = signature.signer.toLowerCase();
+    if (seen.has(signer)) {
+      return { ok: false, reason: `Duplicate signature from ${signature.signer}` };
+    }
+    seen.add(signer);
     const result = await validateImportedSignature({
       pkg: args.pkg,
       signature,
@@ -250,6 +257,9 @@ export function decodeShareLink(
   const match = hash.match(/#\/p\/([A-Za-z0-9_-]+)/);
   if (!match) {
     throw new Error("Not a locsafe share link");
+  }
+  if (match[1].length > Math.ceil(MAX_SHARE_LINK_BYTES / 3) * 4) {
+    throw new Error("Share link exceeds 8KB; import the .locsafe.json file instead");
   }
   const padded = match[1].replace(/-/g, "+").replace(/_/g, "/");
   const pad = padded.length % 4 === 0 ? "" : "=".repeat(4 - (padded.length % 4));

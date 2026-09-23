@@ -53,6 +53,10 @@ describe("stepState", () => {
     expect(stepState("sign", { ...base, snapshot, pkg: signed })).toBe("done");
     expect(stepState("execute", { ...base, snapshot, pkg: signed })).toBe("ready");
     expect(stepState("execute", { ...base, pkg: signed })).toBe("todo");
+    // A snapshot of a different Safe can't vouch for the package's threshold.
+    expect(
+      stepState("execute", { ...base, snapshot: { ...snapshot, address: owner }, pkg: signed }),
+    ).toBe("todo");
   });
 
   it("maps routes to steps", () => {

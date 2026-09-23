@@ -129,10 +129,17 @@ function KindFields({ kind, snapshot }: { kind: Kind; snapshot: SafeSnapshot }) 
         </>
       );
     case "removeOwner":
+      if (owners.length <= 1) {
+        return (
+          <p className="text-sm text-muted-foreground">
+            This Safe has a single owner, and a Safe must keep at least one.
+          </p>
+        );
+      }
       return (
         <>
           <OwnerSelect id="owner" label="Owner to remove" owners={owners} />
-          <ThresholdInput min={1} max={Math.max(owners.length - 1, 1)} value={snapshot.threshold} />
+          <ThresholdInput min={1} max={owners.length - 1} value={snapshot.threshold} />
         </>
       );
     case "swapOwner":

@@ -102,8 +102,10 @@ export function stepState(step: StepId, session: Session | null): StepState {
 }
 
 export function isThresholdMet(session: Session | null): boolean {
-  const threshold = session?.snapshot?.threshold;
-  return threshold !== undefined && (session?.pkg?.signatures.length ?? 0) >= threshold;
+  return (
+    isPackageValidated(session) &&
+    session!.pkg!.signatures.length >= session!.snapshot!.threshold
+  );
 }
 
 /**

@@ -8,6 +8,7 @@ import {
   parsePackage,
   serializePackage,
   validateImportedSignature,
+  validatePackage,
 } from "./package.ts";
 import { adjustVInSignature } from "./signatures.ts";
 import { ZERO_ADDRESS, type SafeTx } from "./types.ts";
@@ -124,6 +125,20 @@ describe("SignedTxPackage", () => {
     expect(result).toEqual({ ok: true });
   });
 
+  it("rejects a package carrying two signatures from the same owner", async () => {
+    const owner = privateKeyToAccount(generatePrivateKey());
+    const unsigned = packageFromTx({ safeAddress: safe, safeVersion: "1.4.1", tx });
+    const data = adjustVInSignature(await owner.sign({ hash: unsigned.hashes.safeTxHash }));
+    const one = { signer: owner.address, data, kind: "eoa" as const };
+    const pkg = { ...unsigned, signatures: [one] };
+    expect(await validatePackage({ pkg, currentOwners: [owner.address] })).toEqual({ ok: true });
+    const result = await validatePackage({
+      pkg: { ...unsigned, signatures: [one, one] },
+      currentOwners: [owner.address],
+    });
+    expect(result).toEqual({ ok: false, reason: `Duplicate signature from ${owner.address}` });
+  });
+
   it("refuses share links larger than 8KB", () => {
     const pkg = packageFromTx({
       safeAddress: safe,
@@ -138,5 +153,9 @@ describe("SignedTxPackage", () => {
     const url = `https://example.ipfs.dweb.link/${encodeShareLink(pkg)}`;
     expect(() => decodeShareLink(url)).toThrow(/Mainnet/);
     expect(decodeShareLink(url, { allowNonMainnet: true }).hashes).toEqual(pkg.hashes);
+  });
+
+  it("refuses to decode oversized share links", () => {
+    expect(() => decodeShareLink(`#/p/${"A".repeat(20_000)}`)).toThrow(/8KB/);
   });
 });

@@ -26,15 +26,22 @@ export function Sign({
 }) {
   const pkg = session?.pkg;
   if (!pkg) return <NoTransaction />;
+  const validated = isPackageValidated(session);
   const signing = busy?.startsWith("sign-");
   return (
     <section data-testid="sign" className="grid gap-4">
-      {!isPackageValidated(session) ? (
+      {!validated ? (
         <Alert variant="warning">
           <TriangleAlertIcon />
-          <AlertTitle>Not connected</AlertTitle>
+          <AlertTitle>Connect before signing</AlertTitle>
           <AlertDescription>
-            Without a connection this page can't confirm the account on your device is an owner.
+            <p>
+              Signing needs your RPC so the signatures already in this transaction, and the account
+              on your device, can be checked against the Safe's current owners.
+            </p>
+            <a href={hrefFor("connect")} className={buttonVariants({ variant: "outline", size: "sm" })}>
+              Connect
+            </a>
           </AlertDescription>
         </Alert>
       ) : null}
@@ -56,13 +63,13 @@ export function Sign({
           </ol>
         </CardContent>
         <CardFooter className="flex-wrap gap-2">
-          <Button onClick={() => onSign("ledger")} disabled={signing}>
+          <Button onClick={() => onSign("ledger")} disabled={signing || !validated}>
             <BusyIcon busy={busy === "sign-ledger"}>
               <UsbIcon />
             </BusyIcon>
             Sign with Ledger
           </Button>
-          <Button onClick={() => onSign("trezor")} disabled={signing}>
+          <Button onClick={() => onSign("trezor")} disabled={signing || !validated}>
             <BusyIcon busy={busy === "sign-trezor"}>
               <UsbIcon />
             </BusyIcon>
