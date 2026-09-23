@@ -243,7 +243,10 @@ export function encodeShareLink(pkg: SignedTxPackage): string {
   return `#/p/${b64}`;
 }
 
-export function decodeShareLink(hash: string): SignedTxPackage {
+export function decodeShareLink(
+  hash: string,
+  options?: { allowNonMainnet?: boolean },
+): SignedTxPackage {
   const match = hash.match(/#\/p\/([A-Za-z0-9_-]+)/);
   if (!match) {
     throw new Error("Not a locsafe share link");
@@ -251,7 +254,7 @@ export function decodeShareLink(hash: string): SignedTxPackage {
   const padded = match[1].replace(/-/g, "+").replace(/_/g, "/");
   const pad = padded.length % 4 === 0 ? "" : "=".repeat(4 - (padded.length % 4));
   const json = atob(padded + pad);
-  return parsePackage(json);
+  return parsePackage(json, options);
 }
 
 export function toSafeSignatures(pkg: SignedTxPackage): SafeSignature[] {

@@ -19,6 +19,9 @@ test("static UI loads with hash routing and does not call Safe infrastructure", 
 
   await page.goto("/#/");
   await expect(page.getByRole("heading", { name: "locsafe" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open app" })).toBeVisible();
+
+  await page.goto("/#/connect");
   await expect(page.getByTestId("connect-form")).toBeVisible();
 
   const blocked = await page.evaluate(async () => {
@@ -30,5 +33,5 @@ test("static UI loads with hash routing and does not call Safe infrastructure", 
     }
   });
   expect(blocked).toBe("NetworkGuardError");
-  expect(extraHosts.filter((url) => url.includes("safe-transaction"))).toEqual([]);
+  expect(extraHosts).toEqual([]);
 });

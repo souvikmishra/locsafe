@@ -78,7 +78,7 @@ test("construct, export, import, and execute with injected hardware stub", async
       };
     }, owner.address);
 
-    await page.goto("/#/");
+    await page.goto("/#/connect");
     await page.locator('input[name="rpcUrl"]').fill(rpcUrl);
     await page.locator('input[name="safeAddress"]').fill(safeAddress);
     await page.getByRole("button", { name: "Load Safe" }).click();
@@ -111,7 +111,7 @@ test("construct, export, import, and execute with injected hardware stub", async
     await expect(page.getByTestId("verify")).toBeVisible();
 
     await page.goto("/#/tx/execute");
-    await page.getByRole("button", { name: /broadcast/i }).click();
+    await page.getByRole("button", { name: /broadcast with ledger/i }).click();
     await expect(page.locator(".status")).toContainText("Broadcast 0x");
     const status = await page.locator(".status").textContent();
     const hash = status?.match(/Broadcast (0x[a-fA-F0-9]+)/)?.[1] as `0x${string}`;

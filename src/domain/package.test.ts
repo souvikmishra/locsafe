@@ -2,6 +2,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { describe, expect, it } from "vitest";
 import { computeSafeHashes } from "./hashes.ts";
 import {
+  decodeShareLink,
   encodeShareLink,
   packageFromTx,
   parsePackage,
@@ -130,5 +131,12 @@ describe("SignedTxPackage", () => {
       tx: { ...tx, data: `0x${"aa".repeat(9000)}` },
     });
     expect(() => encodeShareLink(pkg)).toThrow(/8KB/);
+  });
+
+  it("decodes share links inside full URLs and honours allowNonMainnet", () => {
+    const pkg = packageFromTx({ safeAddress: safe, safeVersion: "1.4.1", tx, chainId: 31337 });
+    const url = `https://example.ipfs.dweb.link/${encodeShareLink(pkg)}`;
+    expect(() => decodeShareLink(url)).toThrow(/Mainnet/);
+    expect(decodeShareLink(url, { allowNonMainnet: true }).hashes).toEqual(pkg.hashes);
   });
 });
