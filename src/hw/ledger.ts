@@ -45,7 +45,7 @@ export async function connectLedger(path = DEFAULT_ETH_PATH): Promise<HardwareSi
         value: tx.value ?? 0n,
       };
       const serialized = serializeTransaction(unsigned);
-      const signed = await eth.signTransaction(derivation, serialized.slice(2));
+      const signed = await eth.signTransaction(derivation, serialized.slice(2), null);
       const raw = serializeTransaction(unsigned, {
         v: BigInt(signed.v),
         r: `0x${signed.r.replace(/^0x/, "")}` as Hex,

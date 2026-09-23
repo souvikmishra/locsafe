@@ -1,23 +1,17 @@
-import { useEffect, useState, type FormEvent } from "react";
-import selectors from "../domain/4byte.json" with { type: "json" };
-import { decodeCalldata, type SelectorDatabase } from "../domain/decode.ts";
+import { useEffect, useEffectEvent, useState } from "react";
+import { isAddress } from "viem";
 import {
+  assertPackageHashes,
   decodeShareLink,
-  encodeShareLink,
   packageFromTx,
   parsePackage,
-  serializePackage,
   validatePackage,
 } from "../domain/package.ts";
 import { adjustVInSignature } from "../domain/signatures.ts";
-import {
-  ZERO_ADDRESS,
-  type SafeTx,
-  type SignedTxPackage,
-} from "../domain/types.ts";
-import { e2eHardwareSigner } from "../hw/types.ts";
+import type { SignedTxPackage } from "../domain/types.ts";
+import { e2eHardwareSigner, type HardwareKind, type HardwareSigner } from "../hw/types.ts";
 import { installNetworkGuard } from "../net/guard.ts";
-import { encodeOwnerChange, execDataFromPackage } from "../rpc/execute.ts";
+import { execDataFromPackage } from "../rpc/execute.ts";
 import {
   createRpcClient,
   isApprovedHash,
@@ -25,80 +19,95 @@ import {
   readSafe,
   type SafeSnapshot,
 } from "../rpc/safe.ts";
-import { hrefFor, parseHash, type Route } from "./router.ts";
-import { isDevChainAllowed, loadSession, saveSession, type Session } from "./session.ts";
+import { AppShell } from "./AppShell.tsx";
+import { buildSafeTx } from "./build-tx.ts";
+import { Home } from "./Home.tsx";
+import { goTo, parseHash, replaceRoute, type Route } from "./router.ts";
+import { Connect } from "./screens/Connect.tsx";
+import { Execute } from "./screens/Execute.tsx";
+import { ImportTx } from "./screens/ImportTx.tsx";
+import { NewTx } from "./screens/NewTx.tsx";
+import { Review } from "./screens/Review.tsx";
+import { SafeOverview } from "./screens/SafeOverview.tsx";
+import { Share } from "./screens/Share.tsx";
+import { Sign } from "./screens/Sign.tsx";
+import { clearSession, isDevChainAllowed, loadSession, saveSession, type Session } from "./session.ts";
+import { isPackageValidated } from "./steps.ts";
+import { sameAddress } from "../lib/utils.ts";
 
-const selectorDb = selectors as SelectorDatabase;
-
-function useRoute(): Route {
-  const [route, setRoute] = useState<Route>(() =>
-    parseHash(window.location.hash),
-  );
+function useRoute(onNavigate: () => void): Route {
+  const [route, setRoute] = useState<Route>(() => parseHash(window.location.hash));
+  const navigated = useEffectEvent(onNavigate);
   useEffect(() => {
-    const onHash = () => setRoute(parseHash(window.location.hash));
+    const onHash = () => {
+      setRoute(parseHash(window.location.hash));
+      navigated();
+      window.scrollTo(0, 0);
+    };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
   return route;
 }
 
-function HashBox({ pkg }: { pkg: SignedTxPackage }) {
-  return (
-    <section className="hashes" data-testid="hashes">
-      <p>
-        <strong>Domain hash</strong>
-        <code>{pkg.hashes.domainHash}</code>
-      </p>
-      <p>
-        <strong>Message hash</strong>
-        <code>{pkg.hashes.messageHash}</code>
-      </p>
-      <p>
-        <strong>Safe transaction hash</strong>
-        <code>{pkg.hashes.safeTxHash}</code>
-      </p>
-    </section>
-  );
-}
+// ponytail: one connection per device kind until Disconnect; reload if the device was unplugged.
+const signers = new Map<HardwareKind, HardwareSigner>();
 
-function CalldataView({ data }: { data: `0x${string}` }) {
-  const decoded = decodeCalldata(data, { selectors: selectorDb });
-  if (!decoded.verified) {
-    return (
-      <p className="unverified" data-testid="unverified">
-        UNVERIFIED raw calldata: <code>{decoded.raw}</code>
-      </p>
-    );
+async function getSigner(kind: HardwareKind): Promise<HardwareSigner> {
+  const injected = e2eHardwareSigner();
+  if (injected) return injected;
+  let signer = signers.get(kind);
+  if (!signer) {
+    signer =
+      kind === "ledger"
+        ? await (await import("../hw/ledger.ts")).connectLedger()
+        : await (await import("../hw/trezor.ts")).connectTrezor();
+    signers.set(kind, signer);
   }
-  return (
-    <p data-testid="decoded">
-      {decoded.signature}{" "}
-      <code>
-        {JSON.stringify(decoded.args, (_k, v) =>
-          typeof v === "bigint" ? v.toString() : v,
-        )}
-      </code>
-    </p>
-  );
+  return signer;
 }
 
-function Nav() {
-  return (
-    <nav>
-      <a href={hrefFor("connect")}>Connect</a>
-      <a href={hrefFor("safe")}>Safe</a>
-      <a href={hrefFor("new")}>New tx</a>
-      <a href={hrefFor("import")}>Import</a>
-      <a href={hrefFor("verify")}>Verify</a>
-      <a href={hrefFor("sign")}>Sign</a>
-      <a href={hrefFor("export")}>Export</a>
-      <a href={hrefFor("execute")}>Execute</a>
-    </nav>
-  );
+function messageOf(err: unknown): string {
+  if (err && typeof err === "object" && "shortMessage" in err && typeof err.shortMessage === "string") {
+    return err.shortMessage;
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
+function readSafeAt(rpcUrl: string, safeAddress: `0x${string}`): Promise<SafeSnapshot> {
+  return readSafe({ rpcUrl, safeAddress, requireMainnet: !isDevChainAllowed() });
+}
+
+/** Rejects packages whose hashes or signatures don't hold against the Safe's on-chain state. */
+async function validateAgainstChain(pkg: SignedTxPackage, snapshot: SafeSnapshot, rpcUrl: string) {
+  if (pkg.chainId !== snapshot.chainId) {
+    throw new Error(`This transaction is for chain ${pkg.chainId}, but your RPC is on chain ${snapshot.chainId}.`);
+  }
+  if (pkg.safeVersion !== snapshot.version) {
+    throw new Error(`This transaction was built for Safe v${pkg.safeVersion}, but the Safe is v${snapshot.version}.`);
+  }
+  const client = createRpcClient(rpcUrl);
+  const result = await validatePackage({
+    pkg,
+    currentOwners: snapshot.owners,
+    isValidSignature: (signer, hash, data) =>
+      isValidEip1271Signature({ client, signer, hash, signature: data }),
+    isApprovedHash: (signer, hash) =>
+      isApprovedHash({ client, safeAddress: pkg.safeAddress, owner: signer, hash }),
+  });
+  if (!result.ok) {
+    throw new Error(`Rejected: ${result.reason}`);
+  }
 }
 
 export default function App() {
-  const route = useRoute();
+  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  // Handlers never set a message and then navigate, so clearing here can't hide their result.
+  const route = useRoute(() => {
+    setError(null);
+    setStatus(null);
+  });
   const [session, setSession] = useState<Session | null>(() => {
     try {
       return loadSession();
@@ -106,405 +115,206 @@ export default function App() {
       return null;
     }
   });
-  const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
 
   function persist(next: Session) {
     saveSession(next);
     setSession(next);
   }
 
+  async function run(key: string, action: () => Promise<void>) {
+    setError(null);
+    setStatus(null);
+    setBusy(key);
+    try {
+      await action();
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   useEffect(() => {
     installNetworkGuard(session?.rpcUrl || "http://127.0.0.1");
   }, [session?.rpcUrl]);
 
-  useEffect(() => {
-    if (route.name === "package") {
-      try {
-        const pkg = decodeShareLink(`#/p/${route.payload}`);
-        const current = session ?? {
-          rpcUrl: "",
-          safeAddress: pkg.safeAddress,
-        };
-        persist({ ...current, pkg, safeAddress: pkg.safeAddress });
-        window.location.hash = "/tx/verify";
-      } catch (err) {
-        setError((err as Error).message);
-      }
+  /** Single entry point for files, pasted links and #/p/ URLs. */
+  async function acceptPackage(pkg: SignedTxPackage) {
+    // The hashes are shown and sent to the device, so they must match the transaction fields.
+    assertPackageHashes(pkg);
+    const rpcUrl = session?.rpcUrl;
+    if (!rpcUrl) {
+      // Reviewable offline; the Review screen flags it as not validated until Connect.
+      persist({ rpcUrl: "", safeAddress: pkg.safeAddress, pkg });
+      replaceRoute("verify");
+      return;
     }
+    const snapshot = await readSafeAt(rpcUrl, pkg.safeAddress);
+    await validateAgainstChain(pkg, snapshot, rpcUrl);
+    persist({ rpcUrl, safeAddress: pkg.safeAddress, snapshot, pkg });
+    replaceRoute("verify");
+  }
+
+  const openShareLink = useEffectEvent((payload: string) => {
+    void run("package", () =>
+      acceptPackage(decodeShareLink(`#/p/${payload}`, { allowNonMainnet: isDevChainAllowed() })),
+    );
+  });
+
+  useEffect(() => {
+    // Opening a #/p/ link syncs app state with the URL, an external system.
+    // oxlint-disable-next-line react/set-state-in-effect
+    if (route.name === "package") openShareLink(route.payload);
   }, [route]);
 
-  async function onConnect(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError(null);
-    const form = new FormData(event.currentTarget);
-    const rpcUrl = String(form.get("rpcUrl") ?? "").trim();
-    const safeAddress = String(form.get("safeAddress") ?? "").trim() as `0x${string}`;
-    installNetworkGuard(rpcUrl);
-    const snapshot = await readSafe({
-      rpcUrl,
-      safeAddress,
-      requireMainnet: !isDevChainAllowed(),
-    });
-    persist({ rpcUrl, safeAddress, snapshot });
-    window.location.hash = "/safe";
-  }
-
-  async function refreshSnapshot(): Promise<SafeSnapshot | undefined> {
-    if (!session) return;
-    const snapshot = await readSafe({
-      rpcUrl: session.rpcUrl,
-      safeAddress: session.safeAddress,
-      requireMainnet: !isDevChainAllowed(),
-    });
-    persist({ ...session, snapshot });
-    return snapshot;
-  }
-
-  async function onPropose(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!session?.snapshot) {
-      setError("Connect a Safe first");
-      return;
-    }
-    const form = new FormData(event.currentTarget);
-    const kind = String(form.get("kind"));
-    let data: `0x${string}` = "0x";
-    let to = session.safeAddress;
-    let value = 0n;
-    if (kind === "eth") {
-      to = String(form.get("to")) as `0x${string}`;
-      value = BigInt(String(form.get("value") || "0"));
-    } else if (kind === "arbitrary") {
-      to = String(form.get("to")) as `0x${string}`;
-      value = BigInt(String(form.get("value") || "0"));
-      data = String(form.get("data") || "0x") as `0x${string}`;
-    } else if (kind === "addOwner") {
-      data = encodeOwnerChange("addOwnerWithThreshold", {
-        owner: String(form.get("owner")) as `0x${string}`,
-        threshold: BigInt(String(form.get("threshold"))),
-      });
-    } else if (kind === "removeOwner") {
-      data = encodeOwnerChange("removeOwner", {
-        prevOwner: String(form.get("prevOwner")) as `0x${string}`,
-        owner: String(form.get("owner")) as `0x${string}`,
-        threshold: BigInt(String(form.get("threshold"))),
-      });
-    } else if (kind === "swapOwner") {
-      data = encodeOwnerChange("swapOwner", {
-        prevOwner: String(form.get("prevOwner")) as `0x${string}`,
-        oldOwner: String(form.get("oldOwner")) as `0x${string}`,
-        newOwner: String(form.get("newOwner")) as `0x${string}`,
-      });
-    } else if (kind === "changeThreshold") {
-      data = encodeOwnerChange("changeThreshold", {
-        threshold: BigInt(String(form.get("threshold"))),
-      });
-    }
-    const tx: SafeTx = {
-      to,
-      value,
-      data,
-      operation: Number(form.get("operation") || 0) as 0 | 1,
-      safeTxGas: 0n,
-      baseGas: 0n,
-      gasPrice: 0n,
-      gasToken: ZERO_ADDRESS,
-      refundReceiver: ZERO_ADDRESS,
-      nonce: session.snapshot.nonce,
-    };
-    const pkg = packageFromTx({
-      safeAddress: session.safeAddress,
-      safeVersion: session.snapshot.version,
-      tx,
-      chainId: session.snapshot.chainId,
-    });
-    persist({ ...session, pkg });
-    window.location.hash = "/tx/verify";
-  }
-
-  async function onImportFile(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const file = (event.currentTarget.elements.namedItem("file") as HTMLInputElement)
-      .files?.[0];
-    if (!file) return;
-    const text = await file.text();
-    const pkg = parsePackage(text, { allowNonMainnet: isDevChainAllowed() });
-    if (!session) {
-      persist({ rpcUrl: "", safeAddress: pkg.safeAddress, pkg });
-      window.location.hash = "/tx/verify";
-      return;
-    }
-    const snapshot =
-      session.snapshot ??
-      (await readSafe({
-        rpcUrl: session.rpcUrl,
-        safeAddress: pkg.safeAddress,
-        requireMainnet: !isDevChainAllowed(),
-      }));
-    const result = await validatePackage({
-      pkg,
-      currentOwners: snapshot.owners,
-      isValidSignature: (signer, hash, data) =>
-        isValidEip1271Signature({
-          client: createRpcClient(session.rpcUrl),
-          signer,
-          hash,
-          signature: data,
-        }),
-      isApprovedHash: (signer, hash) =>
-        isApprovedHash({
-          client: createRpcClient(session.rpcUrl),
-          safeAddress: pkg.safeAddress,
-          owner: signer,
-          hash,
-        }),
-    });
-    if (!result.ok) {
-      setError(result.reason);
-      return;
-    }
-    persist({ ...session, pkg, snapshot, safeAddress: pkg.safeAddress });
-    window.location.hash = "/tx/verify";
-  }
-
-  async function onSign(kind: "ledger" | "trezor") {
-    if (!session?.pkg) return;
-    setError(null);
-    const injected = e2eHardwareSigner();
-    let signer = injected;
-    if (!signer) {
-      if (kind === "ledger") {
-        const { connectLedger } = await import("../hw/ledger.ts");
-        signer = await connectLedger();
-      } else {
-        const { connectTrezor } = await import("../hw/trezor.ts");
-        signer = await connectTrezor();
+  const connect = (rpcUrl: string, safeAddress: string) =>
+    run("connect", async () => {
+      if (!isAddress(safeAddress)) throw new Error("Safe address is not a valid address.");
+      installNetworkGuard(rpcUrl);
+      const snapshot = await readSafeAt(rpcUrl, safeAddress);
+      const pending = sameAddress(session?.pkg?.safeAddress, snapshot.address) ? session?.pkg : undefined;
+      if (pending) {
+        try {
+          await validateAgainstChain(pending, snapshot, rpcUrl);
+        } catch (err) {
+          persist({ rpcUrl, safeAddress, snapshot });
+          throw new Error(`Connected, but the transaction you opened was dropped. ${messageOf(err)}`, {
+            cause: err,
+          });
+        }
       }
-    }
-    const address = await signer.getAddress();
-    const signature = adjustVInSignature(
-      await signer.signSafeTx(session.pkg.hashes),
+      persist({ rpcUrl, safeAddress, snapshot, pkg: pending });
+      goTo(pending ? "verify" : "safe");
+    });
+
+  const refresh = () =>
+    run("refresh", async () => {
+      if (!session?.rpcUrl) return;
+      persist({ ...session, snapshot: await readSafeAt(session.rpcUrl, session.safeAddress) });
+    });
+
+  const build = (form: FormData) =>
+    run("build", async () => {
+      if (!session?.snapshot) throw new Error("Connect your Safe first.");
+      // Re-read so nonce and owner order are current, not from when you connected.
+      const snapshot = await readSafeAt(session.rpcUrl, session.safeAddress);
+      const pkg = packageFromTx({
+        safeAddress: snapshot.address,
+        safeVersion: snapshot.version,
+        tx: buildSafeTx(form, snapshot),
+        chainId: snapshot.chainId,
+      });
+      persist({ ...session, snapshot, pkg });
+      goTo("verify");
+    });
+
+  const importFile = (file: File) =>
+    run("import-file", async () =>
+      acceptPackage(parsePackage(await file.text(), { allowNonMainnet: isDevChainAllowed() })),
     );
-    const pkg = {
-      ...session.pkg,
-      signatures: [
-        ...session.pkg.signatures.filter(
-          (s) => s.signer.toLowerCase() !== address.toLowerCase(),
-        ),
-        { signer: address, data: signature, kind: "eoa" as const },
-      ],
-    };
-    persist({ ...session, pkg });
-    setStatus(`Signed with ${kind} as ${address}`);
-  }
 
-  async function onExecute() {
-    if (!session?.pkg) return;
+  const importLink = (link: string) =>
+    run("import-link", async () =>
+      acceptPackage(decodeShareLink(link, { allowNonMainnet: isDevChainAllowed() })),
+    );
+
+  const sign = (kind: HardwareKind) =>
+    run(`sign-${kind}`, async () => {
+      const pkg = session?.pkg;
+      if (!session || !pkg) return;
+      if (!isPackageValidated(session)) {
+        throw new Error("Connect first, so the account on your device can be checked against the Safe's owners.");
+      }
+      const signer = await getSigner(kind);
+      const address = await signer.getAddress();
+      if (!session.snapshot!.owners.some((o) => sameAddress(o, address))) {
+        throw new Error(`${address} is not an owner of this Safe. Check the account on your ${kind}.`);
+      }
+      const signature = adjustVInSignature(await signer.signSafeTx(pkg.hashes));
+      persist({
+        ...session,
+        pkg: {
+          ...pkg,
+          signatures: [
+            ...pkg.signatures.filter((s) => !sameAddress(s.signer, address)),
+            { signer: address, data: signature, kind: "eoa" },
+          ],
+        },
+      });
+      setStatus(`Signed with ${kind} as ${address}`);
+    });
+
+  const execute = (kind: HardwareKind) =>
+    run(`execute-${kind}`, async () => {
+      if (!session?.pkg) return;
+      const pkg = session.pkg;
+      if (!session.rpcUrl) throw new Error("Connect to your RPC first.");
+      const client = createRpcClient(session.rpcUrl);
+      const chainId = await client.getChainId();
+      if (chainId !== pkg.chainId) {
+        throw new Error(`Your RPC is on chain ${chainId}, but this transaction is for chain ${pkg.chainId}.`);
+      }
+      const signer = await getSigner(kind);
+      const from = await signer.getAddress();
+      const data = execDataFromPackage(pkg);
+      const nonce = await client.getTransactionCount({ address: from });
+      const fees = await client.estimateFeesPerGas();
+      const gas = await client.estimateGas({ account: from, to: pkg.safeAddress, data });
+      const signed = await signer.signEthereumTx({
+        chainId,
+        nonce,
+        gas,
+        maxFeePerGas: fees.maxFeePerGas ?? 1n,
+        maxPriorityFeePerGas: fees.maxPriorityFeePerGas ?? 1n,
+        to: pkg.safeAddress,
+        data,
+      });
+      const hash = await client.sendRawTransaction({ serializedTransaction: signed.raw });
+      setStatus(`Broadcast ${hash}`);
+    });
+
+  function disconnect() {
+    clearSession();
+    signers.clear();
+    setSession(null);
     setError(null);
-    const injected = e2eHardwareSigner();
-    if (!injected) {
-      setError("Connect a hardware wallet to execute (Ledger or Trezor).");
-      return;
-    }
-    const client = createRpcClient(session.rpcUrl);
-    const from = await injected.getAddress();
-    const data = execDataFromPackage(session.pkg);
-    const nonce = await client.getTransactionCount({ address: from });
-    const fees = await client.estimateFeesPerGas();
-    const gas = await client.estimateGas({
-      account: from,
-      to: session.safeAddress,
-      data,
-    });
-    const signed = await injected.signEthereumTx({
-      chainId: session.snapshot?.chainId ?? 1,
-      nonce,
-      gas,
-      maxFeePerGas: fees.maxFeePerGas ?? 1n,
-      maxPriorityFeePerGas: fees.maxPriorityFeePerGas ?? 1n,
-      to: session.safeAddress,
-      data,
-    });
-    const hash = await client.sendRawTransaction({
-      serializedTransaction: signed.raw,
-    });
-    setStatus(`Broadcast ${hash}`);
+    setStatus(null);
+    goTo("connect");
   }
 
-  const pkg = session?.pkg;
+  if (route.name === "home") {
+    return <Home session={session} />;
+  }
+
+  const screen = (() => {
+    switch (route.name) {
+      case "connect":
+        return <Connect session={session} busy={busy} onConnect={connect} />;
+      case "safe":
+        return <SafeOverview session={session} busy={busy} onRefresh={refresh} />;
+      case "new":
+        return <NewTx session={session} busy={busy} onBuild={build} />;
+      case "import":
+        return (
+          <ImportTx session={session} busy={busy} onImportFile={importFile} onImportLink={importLink} />
+        );
+      case "verify":
+        return <Review session={session} />;
+      case "sign":
+        return <Sign session={session} busy={busy} onSign={sign} />;
+      case "export":
+        return <Share session={session} />;
+      case "execute":
+        return <Execute session={session} busy={busy} onExecute={execute} />;
+      case "package":
+        return <ImportTx session={session} busy={busy} onImportFile={importFile} onImportLink={importLink} />;
+    }
+  })();
 
   return (
-    <div className="app">
-      <header>
-        <h1>locsafe</h1>
-        <p>RPC-only Safe signing. Match the hashes on your hardware wallet.</p>
-        <Nav />
-      </header>
-      {error ? <p className="error">{error}</p> : null}
-      {status ? <p className="status">{status}</p> : null}
-
-      {route.name === "connect" ? (
-        <form onSubmit={onConnect} data-testid="connect-form">
-          <label>
-            JSON-RPC URL
-            <input name="rpcUrl" required placeholder="http://127.0.0.1:8545" />
-          </label>
-          <label>
-            Safe address
-            <input name="safeAddress" required placeholder="0x..." />
-          </label>
-          <button type="submit">Load Safe</button>
-        </form>
-      ) : null}
-
-      {route.name === "safe" && session?.snapshot ? (
-        <section data-testid="dashboard">
-          <p>Address: {session.snapshot.address}</p>
-          <p>Version: {session.snapshot.version}</p>
-          <p>Threshold: {session.snapshot.threshold}</p>
-          <p>Nonce: {session.snapshot.nonce.toString()}</p>
-          <p>Balance: {session.snapshot.balance.toString()} wei</p>
-          <p>Owners:</p>
-          <ul>
-            {session.snapshot.owners.map((owner) => (
-              <li key={owner}>{owner}</li>
-            ))}
-          </ul>
-          <button type="button" onClick={() => void refreshSnapshot()}>
-            Refresh
-          </button>
-        </section>
-      ) : null}
-
-      {route.name === "new" ? (
-        <form onSubmit={onPropose} data-testid="new-tx-form">
-          <label>
-            Type
-            <select name="kind" defaultValue="eth">
-              <option value="eth">ETH transfer</option>
-              <option value="arbitrary">Arbitrary call</option>
-              <option value="addOwner">Add owner</option>
-              <option value="removeOwner">Remove owner</option>
-              <option value="swapOwner">Swap owner</option>
-              <option value="changeThreshold">Change threshold</option>
-            </select>
-          </label>
-          <label>
-            To
-            <input name="to" placeholder="0x..." />
-          </label>
-          <label>
-            Value (wei)
-            <input name="value" defaultValue="0" />
-          </label>
-          <label>
-            Data
-            <input name="data" defaultValue="0x" />
-          </label>
-          <label>
-            Operation (0=call, 1=delegatecall)
-            <input name="operation" defaultValue="0" />
-          </label>
-          <label>
-            Owner
-            <input name="owner" />
-          </label>
-          <label>
-            Prev owner
-            <input name="prevOwner" />
-          </label>
-          <label>
-            Old owner
-            <input name="oldOwner" />
-          </label>
-          <label>
-            New owner
-            <input name="newOwner" />
-          </label>
-          <label>
-            Threshold
-            <input name="threshold" />
-          </label>
-          <button type="submit">Build transaction</button>
-        </form>
-      ) : null}
-
-      {route.name === "verify" && pkg ? (
-        <section data-testid="verify">
-          <HashBox pkg={pkg} />
-          <CalldataView data={pkg.transaction.data} />
-          <p>
-            To: {pkg.transaction.to} value={pkg.transaction.value} nonce=
-            {pkg.transaction.nonce}
-          </p>
-          <p>Signatures: {pkg.signatures.length}</p>
-        </section>
-      ) : null}
-
-      {route.name === "sign" && pkg ? (
-        <section data-testid="sign">
-          <HashBox pkg={pkg} />
-          <p>Confirm the domain hash and message hash on the device.</p>
-          <button type="button" onClick={() => void onSign("ledger")}>
-            Sign with Ledger
-          </button>
-          <button type="button" onClick={() => void onSign("trezor")}>
-            Sign with Trezor
-          </button>
-        </section>
-      ) : null}
-
-      {route.name === "export" && pkg ? (
-        <section data-testid="export">
-          <HashBox pkg={pkg} />
-          <button
-            type="button"
-            onClick={() => {
-              const blob = new Blob([serializePackage(pkg)], {
-                type: "application/json",
-              });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement("a");
-              a.href = url;
-              a.download = "tx.locsafe.json";
-              a.click();
-            }}
-          >
-            Download .locsafe.json
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              try {
-                void navigator.clipboard.writeText(encodeShareLink(pkg));
-                setStatus("Copied share link");
-              } catch (err) {
-                setError((err as Error).message);
-              }
-            }}
-          >
-            Copy share link
-          </button>
-        </section>
-      ) : null}
-
-      {route.name === "import" ? (
-        <form onSubmit={onImportFile} data-testid="import-form">
-          <input name="file" type="file" accept=".json,.locsafe.json" />
-          <button type="submit">Import package</button>
-        </form>
-      ) : null}
-
-      {route.name === "execute" && pkg ? (
-        <section data-testid="execute">
-          <HashBox pkg={pkg} />
-          <p>Any funded account can broadcast once the threshold is met.</p>
-          <button type="button" onClick={() => void onExecute()}>
-            Sign ETH tx on hardware wallet and broadcast
-          </button>
-        </section>
-      ) : null}
-    </div>
+    <AppShell route={route} session={session} error={error} status={status} onDisconnect={disconnect}>
+      {screen}
+    </AppShell>
   );
 }

@@ -77,6 +77,20 @@ export function encodeOwnerChange(
   });
 }
 
+export const SENTINEL_OWNERS = "0x0000000000000000000000000000000000000001" as const;
+
+/** Safe owners form a linked list; getOwners() order gives each owner's predecessor. */
+export function prevOwnerOf(
+  owners: readonly `0x${string}`[],
+  owner: `0x${string}`,
+): `0x${string}` {
+  const index = owners.findIndex((o) => o.toLowerCase() === owner.toLowerCase());
+  if (index === -1) {
+    throw new Error(`${owner} is not an owner of this Safe`);
+  }
+  return index === 0 ? SENTINEL_OWNERS : owners[index - 1];
+}
+
 export function execDataFromPackage(pkg: SignedTxPackage): Hex {
   const tx = {
     to: pkg.transaction.to,

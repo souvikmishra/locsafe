@@ -17,6 +17,7 @@ declare module "@ledgerhq/hw-app-eth" {
     signTransaction: (
       path: string,
       rawTxHex: string,
+      resolution?: unknown,
     ) => Promise<{ v: string; r: string; s: string }>;
   }
 }

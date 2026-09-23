@@ -20,5 +20,9 @@ body: |
   - react
   - react-dom
   - viem
+  - class-variance-authority
+  - clsx
+  - tailwind-merge
+  - lucide-react
 
   Optional device libraries (Ledger/Trezor) are not required to verify hashes or import/export packages.

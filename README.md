@@ -18,7 +18,9 @@ pnpm install
 pnpm dev
 ```
 
-Open the app, paste a Mainnet JSON-RPC URL and a Safe address, then propose / verify / sign / export / execute.
+The home page (`#/`) explains the flow; the app starts at `#/connect` and walks through six steps: connect, create or import, review, sign, share, execute. Paste a Mainnet JSON-RPC URL and a Safe address to begin.
+
+`pnpm dev` strips the Content-Security-Policy meta tag so Vite's injected styles and React refresh work; `pnpm build` / `pnpm preview` keep it.
 
 ## CLI
 
@@ -65,7 +67,13 @@ That runs `ipfs add --cid-version=1 --chunker=size-262144 --raw-leaves -Q -r dis
 
 ## Runtime dependencies
 
-See `package.json` `dependencies`. At the first tagged release the GitHub Release body must list that set plus the Kubo flags above.
+See `package.json` `dependencies` (all pinned). At the first tagged release the GitHub Release body must list that set plus the Kubo flags above:
+
+- `react`, `react-dom`: UI
+- `viem`: RPC, ABI encoding, EIP-712 hashing
+- `class-variance-authority`, `clsx`, `tailwind-merge`, `lucide-react`: shadcn/ui components (`src/components/ui`, vendored without Radix)
+
+Tailwind CSS is build-time only (`devDependencies`).
 
 ## License
 
