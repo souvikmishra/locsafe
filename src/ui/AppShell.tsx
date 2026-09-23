@@ -3,6 +3,7 @@ import {
   CheckIcon,
   CircleAlertIcon,
   CircleCheckIcon,
+  HouseIcon,
   LogOutIcon,
   ServerIcon,
   ShieldCheckIcon,
@@ -10,7 +11,7 @@ import {
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert.tsx";
 import { Badge } from "../components/ui/badge.tsx";
-import { Button } from "../components/ui/button.tsx";
+import { Button, buttonVariants } from "../components/ui/button.tsx";
 import { cn, shortAddress } from "../lib/utils.ts";
 import { hrefFor, type Route, type RouteName } from "./router.ts";
 import type { Session } from "./session.ts";
@@ -105,12 +106,6 @@ function StepRail({ current, session }: { current?: StepId; session: Session | n
           </span>
         </a>
       ) : null}
-      <a
-        href={hrefFor("home")}
-        className="mt-4 hidden px-2.5 text-xs text-muted-foreground underline-offset-4 hover:underline md:block"
-      >
-        How locsafe works
-      </a>
     </nav>
   );
 }
@@ -175,6 +170,14 @@ export function AppShell({
       <header className="sticky top-0 z-10 border-b bg-background/85 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-4">
           <Brand />
+          <a
+            href={hrefFor("home")}
+            aria-label="Home"
+            className={buttonVariants({ variant: "ghost", size: "sm", className: "text-muted-foreground" })}
+          >
+            <HouseIcon />
+            <span className="hidden sm:inline">Home</span>
+          </a>
           <div className="ml-auto flex min-w-0 items-center gap-2">
             {safeAddress ? (
               <Badge variant="secondary" className="font-mono" title={safeAddress}>
